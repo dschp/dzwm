@@ -947,7 +947,10 @@ drawbar_status(Monitor *m)
 {
   if (!m->showbar) return;
     
-  if (!m->status_x) drawbar(m);
+  if (!m->status_x) {
+    drawbar(m);
+    return;
+  }
 
   RenderData rd = {.x = m->wx + m->ww, .sy = m->status_y};
   if (m->bar_info_idx < LENGTH(barinfonames)) {
