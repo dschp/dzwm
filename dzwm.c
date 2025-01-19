@@ -2222,6 +2222,7 @@ togglebar(const Arg *arg)
   updatebarpos(selmon);
   XMoveResizeWindow(dpy, selmon->barwin, selmon->wx, selmon->by, selmon->ww, bh);
   arrange(selmon);
+  drawbar(selmon);
 }
 
 void
