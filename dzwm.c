@@ -64,6 +64,10 @@
 #define TEXTW(X)                (drw_fontset_getwidth(drw, (X)) + lrpad)
 #define TEXTW_(X)               (drw_fontset_getwidth(drw, (X)))
 
+#define BAR_INFO_WIN_TITLE      0
+#define BAR_INFO_WS_OVERVIEW    1
+#define BAR_INFO_CUSTOM         2
+
 typedef unsigned int uint;
 
 /* enums */
@@ -934,7 +938,7 @@ drawbar(Monitor *m)
   drw_map(drw, m->barwin, 0, 0, x, bh);
   m->status_x = x;
 
-  if (m->bar_info_idx < 2)
+  if (m->bar_info_idx < BAR_INFO_CUSTOM)
     drawbar_status(m);
 }
 
@@ -958,7 +962,7 @@ drawbar_status(Monitor *m)
   }
 
   switch (m->bar_info_idx) {
-  case 0:
+  case BAR_INFO_WS_OVERVIEW:
     if (m->clients) {
       uint occ[WS_LEN] = {0}, urg[WS_LEN] = {0};
       for (Client *c = m->clients; c; c = c->next) {
@@ -976,7 +980,7 @@ drawbar_status(Monitor *m)
       }
     }
     break;
-  case 1:
+  case BAR_INFO_WIN_TITLE:
     if (m->sel) {
       Client *c = m->sel;
       char buf[300];
@@ -992,7 +996,7 @@ drawbar_status(Monitor *m)
     break;
   default:
     {
-      const uint i = m->bar_info_idx - 2;
+      const uint i = m->bar_info_idx - BAR_INFO_CUSTOM;
       if (i < LENGTH(barinforenders)) {
 	uint orig_x = rd.x;
 	BarInfoRender r = barinforenders[i];
@@ -1045,7 +1049,7 @@ expose(XEvent *e)
   XExposeEvent *ev = &e->xexpose;
 
   if (ev->count == 0 && (m = wintomon(ev->window)))
-    if (m->bar_info_idx == 1)
+    if (m->bar_info_idx == BAR_INFO_WIN_TITLE)
       drawbar_status(m);
 }
 
@@ -1076,7 +1080,7 @@ focus(Client *c)
   }
   selmon->sel = c;
   for (Monitor *m = mons; m; m = m->next)
-    if (m->bar_info_idx < 2)
+    if (m->bar_info_idx < BAR_INFO_CUSTOM)
       drawbar_status(m);
 }
 
@@ -1142,9 +1146,8 @@ focuspane_to(uint i)
   if (c && c != selmon->sel) {
     focus(c);
     restack(selmon);
-  } else {
-    drawbar(selmon);
   }
+  drawbar(selmon);
 }
 
 void
@@ -1742,7 +1745,7 @@ propertynotify(XEvent *e)
     }
     if (ev->atom == XA_WM_NAME || ev->atom == netatom[NetWMName]) {
       updatetitle(c);
-      if (c == c->mon->sel && c->mon->bar_info_idx == 1)
+      if (c == c->mon->sel && c->mon->bar_info_idx == BAR_INFO_WIN_TITLE)
 	drawbar_status(c->mon);
     }
     if (ev->atom == netatom[NetWMWindowType])
@@ -2093,7 +2096,7 @@ seturgent(Client *c, int urg)
   XWMHints *wmh;
 
   c->isurgent = urg;
-  if (urg) c->mon->bar_info_idx = 0;
+  if (urg) c->mon->bar_info_idx = BAR_INFO_WS_OVERVIEW;
 
   if (!(wmh = XGetWMHints(dpy, c->win)))
     return;
@@ -2232,7 +2235,7 @@ togglefloating(const Arg *arg)
     return;
 
   selmon->sel->isfloating = !selmon->sel->isfloating || selmon->sel->isfixed;
-  if (selmon->bar_info_idx == 1)
+  if (selmon->bar_info_idx == BAR_INFO_WIN_TITLE)
     drawbar_status(selmon);
   arrange(selmon);
 }
@@ -2505,7 +2508,7 @@ void
 updatestatus(void)
 {
   for (Monitor *m = mons; m; m = m->next)
-    if (m->bar_info_idx > 1)
+    if (m->bar_info_idx >= BAR_INFO_CUSTOM)
       drawbar_status(m);
 }
 
@@ -2541,7 +2544,7 @@ updatewmhints(Client *c)
       XSetWMHints(dpy, c->win, wmh);
     } else {
       c->isurgent = (wmh->flags & XUrgencyHint) ? 1 : 0;
-      if (c->isurgent) c->mon->bar_info_idx = 0;
+      if (c->isurgent) c->mon->bar_info_idx = BAR_INFO_WS_OVERVIEW;
     }
     if (wmh->flags & InputHint)
       c->neverfocus = !wmh->input;
