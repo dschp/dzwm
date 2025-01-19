@@ -2630,12 +2630,10 @@ zoom(const Arg *arg)
   pop(c);
 }
 
-int timer_looping;
-
 void*
 timer_loop(void* v)
 {
-  while (timer_looping) {
+  while (running) {
     XStoreName(dpy, root, "");
     XFlush(dpy);
 
@@ -2663,13 +2661,9 @@ main(int argc, char *argv[])
 #endif /* __OpenBSD__ */
   scan();
 
-  timer_looping = 1;
   pthread_t timer;
   pthread_create(&timer, NULL, timer_loop, NULL);
-
   run();
-
-  timer_looping = 0;
   pthread_join(timer, NULL);
 
   cleanup();
