@@ -463,15 +463,15 @@ applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact)
 void
 arrange(Monitor *m)
 {
-  if (m)
-    showhide(m->stack);
-  else for (m = mons; m; m = m->next)
-	 showhide(m->stack);
   if (m) {
+    showhide(m->stack);
     arrangemon(m);
     restack(m);
-  } else for (m = mons; m; m = m->next)
-	   arrangemon(m);
+  } else
+    for (m = mons; m; m = m->next) {
+      showhide(m->stack);
+      arrangemon(m);
+    }
 }
 
 void
@@ -513,17 +513,18 @@ arrangemon(Monitor *m)
     for (int i = 0, j = 0; i < WS_PANES; i++) {
       if (!ISSHOWING(m, i) || tiled_cnt[i] == 0) continue;
 
-      if (j == 0) {
+      switch (j) {
+      case 0:
 	r.w = m->ww * ws->div_ratio / 100;
-      } else if (j == 1) {
+	break;
+      case 1:
+	r.x += r.w;
 	r.w = m->ww - r.w;
+	break;
       }
       j++;
 
       layouts[ws->panes[i].layout_idx].arrange(m, i, &r);
-
-      if (j == 1)
-	r.x += r.w;
     }
   }
 }
@@ -653,6 +654,7 @@ clearpanes(const Arg *arg)
   unfocus(selmon->sel, 0);
   selmon->sel = NULL;
   arrange(selmon);
+  drawbar(selmon);
 }
 
 void
@@ -937,20 +939,13 @@ drawbar(Monitor *m)
 
   drw_map(drw, m->barwin, 0, 0, x, bh);
   m->status_x = x;
-
-  if (m->bar_info_idx < BAR_INFO_CUSTOM)
-    drawbar_status(m);
+  drawbar_status(m);
 }
 
 void
 drawbar_status(Monitor *m)
 {
   if (!m->showbar) return;
-    
-  if (!m->status_x) {
-    drawbar(m);
-    return;
-  }
 
   RenderData rd = {.x = m->wx + m->ww, .sy = m->status_y};
   if (m->bar_info_idx < LENGTH(barinfonames)) {
@@ -1020,9 +1015,7 @@ drawbar_status(Monitor *m)
 void
 drawbars(void)
 {
-  Monitor *m;
-
-  for (m = mons; m; m = m->next)
+  for (Monitor *m = mons; m; m = m->next)
     drawbar(m);
 }
 
@@ -1082,9 +1075,8 @@ focus(Client *c)
     XDeleteProperty(dpy, root, netatom[NetActiveWindow]);
   }
   selmon->sel = c;
-  for (Monitor *m = mons; m; m = m->next)
-    if (m->bar_info_idx < BAR_INFO_CUSTOM)
-      drawbar_status(m);
+  if (c && c->mon->bar_info_idx < BAR_INFO_CUSTOM)
+    drawbar_status(c->mon);
 }
 
 /* there are some broken focus acquiring clients needing extra handling */
@@ -1727,7 +1719,7 @@ propertynotify(XEvent *e)
   XPropertyEvent *ev = &e->xproperty;
 
   if ((ev->window == root) && (ev->atom == XA_WM_NAME))
-    updatestatus();
+    drawbars();
   else if (ev->state == PropertyDelete)
     return; /* ignore */
   else if ((c = wintoclient(ev->window))) {
@@ -1925,11 +1917,14 @@ sendmon(Client *c, Monitor *m)
   unfocus(c, 1);
   detach(c);
   detachstack(c);
+  drawbar(c->mon);
+
   c->mon = m;
   attach(c);
   attachstack(c);
   focus(NULL);
   arrange(NULL);
+  drawbar(m);
 }
 
 void
@@ -2175,8 +2170,8 @@ switchworkspace(const Arg *arg)
   selmon->selws = &selmon->workspaces[ws_idx][alt_idx];
 
   focus(NULL);
-  drawbar(selmon);
   arrange(selmon);
+  drawbar(selmon);
 }
 
 void
@@ -2238,9 +2233,9 @@ togglefloating(const Arg *arg)
     return;
 
   selmon->sel->isfloating = !selmon->sel->isfloating || selmon->sel->isfixed;
+  arrange(selmon);
   if (selmon->bar_info_idx == BAR_INFO_WIN_TITLE)
     drawbar_status(selmon);
-  arrange(selmon);
 }
 
 void
@@ -2262,8 +2257,8 @@ togglepane(const Arg *arg)
     }
   }
 
-  drawbar(selmon);
   arrange(selmon);
+  drawbar(selmon);
 }
 
 void
@@ -2302,8 +2297,8 @@ unmanage(Client *c, int destroyed)
   free(c);
   focus(NULL);
   updateclientlist();
-  drawbar(m);
   arrange(m);
+  drawbar(m);
 }
 
 void
