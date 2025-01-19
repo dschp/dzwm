@@ -1,0 +1,7 @@
+dzwm
+*.o
+*.orig
+*~
+\#*\#
+
+config.h
