@@ -2189,8 +2189,8 @@ togglefloating(const Arg *arg)
 
   selmon->sel->isfloating = !selmon->sel->isfloating || selmon->sel->isfixed;
   arrange(selmon);
-  if (selmon->bar_info_idx == BAR_INFO_WIN_TITLE)
-    drawbar_status(selmon);
+  selmon->bar_info_idx = BAR_INFO_WIN_TITLE;
+  drawbar_status(selmon);
 }
 
 void
