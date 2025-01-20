@@ -163,15 +163,6 @@ struct Rect {
 };
 
 typedef struct {
-  const char *class;
-  const char *instance;
-  const char *title;
-  int ws_idx;
-  int isfloating;
-  int monitor;
-} Rule;
-
-typedef struct {
   uint x;
   uint sy;
 } RenderData;
@@ -179,7 +170,6 @@ typedef struct {
 typedef void (*BarInfoRender)(RenderData *d);
 
 /* function declarations */
-static void applyrules(Client *c);
 static int applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact);
 static void arrange(Monitor *m);
 static void arrangemon(Monitor *m);
@@ -353,44 +343,6 @@ struct Monitor {
   Monitor *next;
   Window barwin;
 };
-
-/* function implementations */
-void
-applyrules(Client *c)
-{
-  const char *class, *instance;
-  unsigned int i;
-  const Rule *r;
-  Monitor *m;
-  XClassHint ch = { NULL, NULL };
-
-  /* rule matching */
-  c->isfloating = 0;
-  XGetClassHint(dpy, c->win, &ch);
-  class    = ch.res_class ? ch.res_class : broken;
-  instance = ch.res_name  ? ch.res_name  : broken;
-
-  c->ws_idx = c->mon->ws_idx;
-  c->pane_idx = c->mon->selws->selpane;
-  for (i = 0; i < LENGTH(rules); i++) {
-    r = &rules[i];
-    if ((!r->title || strstr(c->name, r->title))
-	&& (!r->class || strstr(class, r->class))
-	&& (!r->instance || strstr(instance, r->instance)))
-      {
-	c->isfloating = r->isfloating;
-	if (r->ws_idx >= 0 && r->ws_idx < WS_LEN)
-	  c->ws_idx = r->ws_idx;
-	for (m = mons; m && m->num != r->monitor; m = m->next);
-	if (m)
-	  c->mon = m;
-      }
-  }
-  if (ch.res_class)
-    XFree(ch.res_class);
-  if (ch.res_name)
-    XFree(ch.res_name);
-}
 
 int
 applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact)
@@ -1408,7 +1360,9 @@ manage(Window w, XWindowAttributes *wa)
     c->pane_idx = t->pane_idx;
   } else {
     c->mon = selmon;
-    applyrules(c);
+    c->isfloating = 0;
+    c->ws_idx = c->mon->ws_idx;
+    c->pane_idx = c->mon->selws->selpane;
   }
 
   if (c->x + WIDTH(c) > c->mon->wx + c->mon->ww)
