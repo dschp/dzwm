@@ -76,15 +76,6 @@ static const char *panenames[] = {
   "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10" ,"f11", "f12"
 };
 
-static const Rule rules[] = {
-  /* xprop(1):
-   *	WM_CLASS(STRING) = instance, class
-   *	WM_NAME(STRING) = title
-   */
-  /* class      instance    title       ws_idx    isfloating   monitor */
-  { "dummy",    NULL,       NULL,       -1,       1,           -1 },
-};
-
 /* layout(s) */
 static const uint div_ratio_init = 70;   /* 55 means 0.55 [0.05..0.95] */
 static const uint max_disp_init  = 0;    /* num of max clients. 0 means showing all clients */
@@ -114,7 +105,7 @@ static const Layout layouts[] = {
 #define FNKEYS(KEY,IDX)							\
   { MODKEY,              KEY,  togglepane,         {.ui = IDX} },	\
   { MODKEY|ShiftMask,    KEY,  moveclient_paneidx, {.ui = IDX - 1} },	\
-  { MODKEY|ControlMask,  KEY,  setbarinfoidx,      {.ui = IDX - 1} }
+  { MODKEY|ControlMask,  KEY,  set_bar_status,     {.ui = IDX - 1} }
 
 /* commands */
 static char dmenumon[2] = "0"; /* component of dmenucmd, manipulated in spawn() */
@@ -145,19 +136,19 @@ static Key keys[] = {
   { MODKEY|ShiftMask,      XK_space,        maximize,             {0} },
   { MODKEY,                XK_Up,           inc_max_disp,         {.i = +1 } },
   { MODKEY,                XK_Down,         inc_max_disp,         {.i = -1 } },
-  { MODKEY,                XK_Left,         cyclelayout,          {.i = -1 } },
-  { MODKEY,                XK_Right,        cyclelayout,          {.i = +1 } },
+  { MODKEY,                XK_Left,         cycle_layout,         {.i = -1 } },
+  { MODKEY,                XK_Right,        cycle_layout,         {.i = +1 } },
   { MODKEY,                XK_h,            focuspane,            {.i = -1 } },
-  { MODKEY,                XK_j,            focuscycle,           {.i = +1 } },
-  { MODKEY,                XK_k,            focuscycle,           {.i = -1 } },
+  { MODKEY,                XK_j,            cycle_focus,          {.i = +1 } },
+  { MODKEY,                XK_k,            cycle_focus,          {.i = -1 } },
   { MODKEY,                XK_l,            focuspane,            {.i = +1 } },
   { MODKEY|ShiftMask,      XK_h,            moveclient_pane,      {.i = -1 } },
   { MODKEY|ShiftMask,      XK_j,            movestack,            {.i = +1 } },
   { MODKEY|ShiftMask,      XK_k,            movestack,            {.i = -1 } },
   { MODKEY|ShiftMask,      XK_l,            moveclient_pane,      {.i = +1 } },
   { MODKEY|ControlMask,    XK_h,            focuspane_showing,    {.i = -1 } },
-  { MODKEY|ControlMask,    XK_j,            inc_info_idx,         {.i = +1 } },
-  { MODKEY|ControlMask,    XK_k,            inc_info_idx,         {.i = -1 } },
+  { MODKEY|ControlMask,    XK_j,            cycle_bar_status,     {.i = +1 } },
+  { MODKEY|ControlMask,    XK_k,            cycle_bar_status,     {.i = -1 } },
   { MODKEY|ControlMask,    XK_l,            focuspane_showing,    {.i = +1 } },
   { MODKEY|AltMask,        XK_h,            inc_div_ratio,        {.i = -5 } },
   { MODKEY|AltMask,        XK_j,            inc_div_ratio,        {.i = +1 } },
@@ -228,60 +219,48 @@ static Button buttons[] = {
   { ClkClientWin,          MODKEY,         Button3,        resizemouse,    {0} },
 };
 
-static const char *barinfonames[] = {
-  "🪟", "📌", "📆", "📆", "📆", "📆", "📃", "🔖", "🗺️", "🛎️",
-  "✅", "💥", "💫", "💦", "🚀", "🔥", "💧", "💡", "⚙️", "💬",
-  "🎃", "🔋", "🔊", "📢", "📝",
-};
-
-void barinfo_datetime(RenderData *d, char *label, char *tz) {
-  time_t now = time(NULL);
-  setenv("TZ", tz, 1);
-  struct tm *tm = localtime(&now);
-
-  char buf[20];
-  uint w;
-
-  w = TEXTW(label);
-  drw_setscheme(drw, scheme[SchemeDate1]);
-  d->x -= w;
-  drw_text(drw, d->x, d->sy, w, bh - d->sy, lrpad / 2, label, 0);
-
-  strftime(buf, sizeof(buf), "%T", tm);
-  w = TEXTW(buf);
-  drw_setscheme(drw, scheme[SchemeDate2]);
-  d->x -= w;
-  drw_text(drw, d->x, d->sy, w, bh - d->sy, lrpad / 2, buf, 0);
-
-  strftime(buf, sizeof(buf), "%a", tm);
-  w = TEXTW(buf);
-  drw_setscheme(drw, scheme[SchemeDate3]);
-  d->x -= w;
-  drw_text(drw, d->x, d->sy, w, bh - d->sy, lrpad / 2, buf, 0);
-
-  strftime(buf, sizeof(buf), "%F", tm);
-  w = TEXTW(buf);
-  drw_setscheme(drw, scheme[SchemeDate4]);
-  d->x -= w;
-  drw_text(drw, d->x, d->sy, w, bh - d->sy, lrpad / 2, buf, 0);
+void barstatus_datetime_est(Monitor *m) {
+  barstatus_datetime(m, "EST", ":EST");
+}
+void barstatus_datetime_ict(Monitor *m) {
+  barstatus_datetime(m, "ICT", ":Asia/Bangkok");
+}
+void barstatus_datetime_jst(Monitor *m) {
+  barstatus_datetime(m, "JST", ":Asia/Tokyo");
+}
+void barstatus_datetime_utc(Monitor *m) {
+  barstatus_datetime(m, "UTC", ":UTC");
 }
 
-void barinfo_datetime_est(RenderData *d) {
-  barinfo_datetime(d, "EST", ":EST");
-}
-void barinfo_datetime_ict(RenderData *d) {
-  barinfo_datetime(d, "ICT", ":Asia/Bangkok");
-}
-void barinfo_datetime_jst(RenderData *d) {
-  barinfo_datetime(d, "JST", ":Asia/Tokyo");
-}
-void barinfo_datetime_utc(RenderData *d) {
-  barinfo_datetime(d, "UTC", ":UTC");
+void barstatus_test1(Monitor *m) {
+  barstatus_command(m, "cat ~/dzwm-status.txt");
 }
 
-static const BarInfoRender barinforenders[] = {
-  barinfo_datetime_ict,
-  barinfo_datetime_est,
-  barinfo_datetime_utc,
-  barinfo_datetime_jst,
+void barstatus_test2(Monitor *m) {
+  barstatus_file(m, "dzwm-status.txt");
+}
+
+static const StatusRenderSpec statusrenderspecs[] = {
+  {"🪟", barstatus_wintitle,      0},
+  {"📌", barstatus_workspaces,    0},
+  {"📆", barstatus_datetime_ict,  0},
+  {"📆", barstatus_datetime_est,  0},
+  {"📆", barstatus_datetime_utc,  0},
+  {"📆", barstatus_datetime_jst,  0},
+  {"📃", barstatus_test1,         5},
+  {"🔖", barstatus_test2,         5},
+  {"💥", barstatus_dummy,        99},
+  {"💫", barstatus_dummy,        99},
+  {"💦", barstatus_dummy,        99},
+  {"🚀", barstatus_dummy,        99},
+  {"🔥", barstatus_dummy,        99},
+  {"💧", barstatus_dummy,        99},
+  {"💡", barstatus_dummy,        99},
+  {"💬", barstatus_dummy,        99},
+  {"🎃", barstatus_dummy,        99},
+  {"🔋", barstatus_dummy,        99},
+  {"🔊", barstatus_dummy,        99},
+  {"📢", barstatus_dummy,        99},
+  {"📝", barstatus_dummy,        99},
+  {"⚙️", barstatus_dummy,        99},
 };

@@ -64,9 +64,9 @@
 #define TEXTW(X)                (drw_fontset_getwidth(drw, (X)) + lrpad)
 #define TEXTW_(X)               (drw_fontset_getwidth(drw, (X)))
 
-#define BAR_INFO_WIN_TITLE      0
-#define BAR_INFO_WS_OVERVIEW    1
-#define BAR_INFO_CUSTOM         2
+#define BAR_STATUS_WIN_TITLE    0
+#define BAR_STATUS_WORKSPACES   1
+#define BAR_STATUS_CUSTOM       2
 
 typedef unsigned int uint;
 
@@ -102,6 +102,8 @@ enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
 enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; /* default atoms */
 enum { ClkTagBar, ClkLtSymbol, ClkStatusText, ClkWinTitle,
        ClkClientWin, ClkRootWin, ClkLast }; /* clicks */
+
+#define SCHEME_MAX SchemeDate4
 
 typedef union {
   int i;
@@ -162,12 +164,13 @@ struct Rect {
   uint h;
 };
 
-typedef struct {
-  uint x;
-  uint sy;
-} RenderData;
+typedef void (*BarStatusRender)(Monitor *m);
 
-typedef void (*BarInfoRender)(RenderData *d);
+typedef struct {
+  const char *icon;
+  BarStatusRender render;
+  uint interval;
+} StatusRenderSpec;
 
 /* function declarations */
 static int applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact);
@@ -175,6 +178,13 @@ static void arrange(Monitor *m);
 static void arrangemon(Monitor *m);
 static void attach(Client *c);
 static void attachstack(Client *c);
+static void barstatus_command(Monitor *m, const char *cmd);
+static void barstatus_datetime(Monitor *m, char *label, char *tz);
+static void barstatus_dummy(Monitor *m);
+static void barstatus_file(Monitor *m, const char *path);
+static void barstatus_read(Monitor *m, FILE *fp);
+static void barstatus_wintitle(Monitor *m);
+static void barstatus_workspaces(Monitor *m);
 static void buttonpress(XEvent *e);
 static void centerwindow(const Arg *arg);
 static void checkotherwm(void);
@@ -186,7 +196,9 @@ static void configure(Client *c);
 static void configurenotify(XEvent *e);
 static void configurerequest(XEvent *e);
 static Monitor *createmon(void);
-static void cyclelayout(const Arg *arg);
+static void cycle_focus(const Arg *arg);
+static void cycle_layout(const Arg *arg);
+static void cycle_bar_status(const Arg *arg);
 static void destroynotify(XEvent *e);
 static void detach(Client *c);
 static void detachstack(Client *c);
@@ -197,7 +209,6 @@ static void enternotify(XEvent *e);
 static void expose(XEvent *e);
 static void focus(Client *c);
 static void focusin(XEvent *e);
-static void focuscycle(const Arg *arg);
 static void focuspane(const Arg *arg);
 static void focuspane_showing(const Arg *arg);
 static Atom getatomprop(Client *c, Atom prop);
@@ -207,7 +218,6 @@ static int gettextprop(Window w, Atom atom, char *text, unsigned int size);
 static void grabbuttons(Client *c, int focused);
 static void grabkeys(void);
 static void inc_div_ratio(const Arg *arg);
-static void inc_info_idx(const Arg *arg);
 static void inc_max_disp(const Arg *arg);
 static void keypress(XEvent *e);
 static void killclient(const Arg *arg);
@@ -235,12 +245,12 @@ static void run(void);
 static void scan(void);
 static int sendevent(Client *c, Atom proto);
 static void sendmon(Client *c, Monitor *m);
-static void setbarinfoidx(const Arg *arg);
 static void setclientstate(Client *c, long state);
 static void setfocus(Client *c);
 static void setfullscreen(Client *c, int fullscreen);
 static void setup(void);
 static void seturgent(Client *c, int urg);
+static void set_bar_status(const Arg *arg);
 static void showhide(Client *c);
 static void spawn(const Arg *arg);
 static void switchworkspace(const Arg *arg);
@@ -305,10 +315,10 @@ static Window root, wmcheckwin;
 /* configuration, allows nested code to access above variables */
 #include "config.h"
 
-#define WS_LEN       LENGTH(wsnames)
-#define WS_PANES     LENGTH(panenames)
-#define WS_ALTS      LENGTH(altnames)
-#define BAR_INFO_CNT LENGTH(barinfonames)
+#define WS_LEN         LENGTH(wsnames)
+#define WS_PANES       LENGTH(panenames)
+#define WS_ALTS        LENGTH(altnames)
+#define BAR_STATUS_CNT LENGTH(statusrenderspecs)
 
 typedef struct {
   uint showing;
@@ -329,14 +339,16 @@ struct Monitor {
   uint alt_idx;
   uint last_alt_idx;
   Workspace *selws;
-  uint bar_info_idx;
   int num;
   int by;               /* bar geometry */
   int mx, my, mw, mh;   /* screen size */
   int wx, wy, ww, wh;   /* window area  */
   int showbar;
   int topbar;
-  uint status_x, status_y;
+  uint status_idx;
+  uint status_x;
+  uint dx, dy, dw, dh;  /* drawing info for status bar */
+  time_t last_status_render;
   Client *clients;
   Client *sel;
   Client *stack;
@@ -493,6 +505,141 @@ attachstack(Client *c)
 {
   c->snext = c->mon->stack;
   c->mon->stack = c;
+}
+
+void
+barstatus_command(Monitor *m, const char *cmd)
+{
+  FILE *fp = popen(cmd, "r");
+  if (!fp) {
+    fprintf(stderr, "Error popen with: %s\n", cmd);
+    return;
+  }
+
+  barstatus_read(m, fp);
+  pclose(fp);
+}
+
+void
+barstatus_datetime(Monitor *m, char *label, char *tz)
+{
+  time_t now = time(NULL);
+  setenv("TZ", tz, 1);
+  struct tm *tm = localtime(&now);
+
+  uint w;
+  char buf[20];
+
+  w = TEXTW(label);
+  drw_setscheme(drw, scheme[SchemeDate1]);
+  m->dx -= w;
+  drw_text(drw, m->dx, m->dy, w, m->dh, lrpad / 2, label, 0);
+
+  strftime(buf, sizeof(buf), "%T", tm);
+  w = TEXTW(buf);
+  drw_setscheme(drw, scheme[SchemeDate2]);
+  m->dx -= w;
+  drw_text(drw, m->dx, m->dy, w, m->dh, lrpad / 2, buf, 0);
+
+  strftime(buf, sizeof(buf), "%a", tm);
+  w = TEXTW(buf);
+  drw_setscheme(drw, scheme[SchemeDate3]);
+  m->dx -= w;
+  drw_text(drw, m->dx, m->dy, w, m->dh, lrpad / 2, buf, 0);
+
+  strftime(buf, sizeof(buf), "%F", tm);
+  w = TEXTW(buf);
+  drw_setscheme(drw, scheme[SchemeDate4]);
+  m->dx -= w;
+  drw_text(drw, m->dx, m->dy, w, m->dh, lrpad / 2, buf, 0);
+}
+
+void
+barstatus_dummy(Monitor *m)
+{
+}
+
+void
+barstatus_file(Monitor *m, const char *path)
+{
+  FILE *fp = fopen(path, "r");
+  if (!fp) {
+    fprintf(stderr, "Error fopen with: %s\n", path);
+    return;
+  }
+
+  barstatus_read(m, fp);
+  fclose(fp);
+}
+
+void
+barstatus_read(Monitor *m, FILE *fp)
+{
+  uint w;
+  char buf[300], *p;
+  while (fgets(buf, sizeof buf, fp) != 0) {
+    p = strtok(buf, "\t");
+    if (p == NULL) continue;
+    long si = strtol(p, NULL, 10);
+    if (si < 0 || si > SCHEME_MAX) si = 0;
+
+    p = strtok(NULL, "\t");
+    if (p == NULL) continue;
+    long pad = strtol(p, NULL, 10);
+    if (pad < 0 || pad > 20) pad = 0;
+
+    p = strtok(NULL, "\n");
+    if (p == NULL) continue;
+
+    w = TEXTW_(p) + pad * 2;
+    if (m->status_x + w > m->dx) break;
+
+    drw_setscheme(drw, scheme[si]);
+    m->dx -= w;
+    drw_text(drw, m->dx, m->dy, w, m->dh, pad, p, 0);
+  }
+}
+
+void
+barstatus_wintitle(Monitor *m)
+{
+  if (m->sel) {
+    Client *c = m->sel;
+    char buf[300];
+    snprintf(buf, sizeof buf, "%s%s",
+	     c->isfloating ? "🪽  " : "", c->name);
+    uint w = TEXTW(buf);
+    if (w < BAR_CLIENT_MIN_WIDTH) w = BAR_CLIENT_MIN_WIDTH;
+    else if (w > m->dw) w = m->dw;
+
+    size_t si = SchemeSel1 + c->pane_idx;
+    drw_setscheme(drw, scheme[si]);
+    m->dx -= w;
+    drw_text(drw, m->dx, 0, w, bh, lrpad / 2, buf, 1);
+
+    m->dy = 0;
+  }
+}
+
+void
+barstatus_workspaces(Monitor *m)
+{
+  if (m->clients) {
+    uint occ[WS_LEN] = {0}, urg[WS_LEN] = {0};
+    for (Client *c = m->clients; c; c = c->next) {
+      occ[c->ws_idx] = 1;
+      if (c->isurgent) urg[c->ws_idx] = 1;
+    }
+    for (int i = WS_LEN - 1; i >= 0; i--) {
+      if (!occ[i]) continue;
+
+      uint w = TEXTW(wsnames[i]);
+      if (m->status_x + w > m->dx) break;
+
+      m->dx -= w;
+      drw_text(drw, m->dx, m->dy, w, m->dh, lrpad / 2, wsnames[i], urg[i]);
+    }
+  }
 }
 
 void
@@ -750,14 +897,65 @@ createmon(void)
   }
   m->showbar = showbar;
   m->topbar = topbar;
-  m->bar_info_idx = 0;
+  m->status_idx = 0;
   m->status_x = 0;
-  m->status_y = 3;
   return m;
 }
 
 void
-cyclelayout(const Arg *arg)
+cycle_bar_status(const Arg *arg)
+{
+  if (!arg) return;
+
+  int i = selmon->status_idx + (arg->i > 0 ? 1 : -1);
+  if (i < 0)
+    i = BAR_STATUS_CNT - 1;
+  else if (i >= BAR_STATUS_CNT)
+    i = 0;
+
+  selmon->status_idx = i;
+  selmon->last_status_render = 0;
+  drawbar_status(selmon);
+}
+
+void
+cycle_focus(const Arg *arg)
+{
+  if (!selmon->sel || (selmon->sel->isfullscreen && lockfullscreen))
+    return;
+
+  const uint pi = selmon->sel->pane_idx;
+  if (!ISSHOWING(selmon, pi))
+    return;
+
+  Client *c = NULL, *i;
+
+  if (arg->i > 0) {
+    for (c = selmon->sel->next; c; c = c->next)
+      if (ISCURRENTWS(c) && c->pane_idx == pi)
+	break;
+    if (!c)
+      for (c = selmon->clients; c; c = c->next)
+	if (ISCURRENTWS(c) && c->pane_idx == pi)
+	  break;
+  } else {
+    for (i = selmon->clients; i != selmon->sel; i = i->next)
+      if (ISCURRENTWS(i) && i->pane_idx == pi)
+	c = i;
+    if (!c)
+      for (i = i->next; i; i = i->next)
+	if (ISCURRENTWS(i) && i->pane_idx == pi)
+	  c = i;
+  }
+
+  if (c && c != selmon->sel) {
+    focus(c);
+    restack(selmon);
+  }
+}
+
+void
+cycle_layout(const Arg *arg)
 {
   if (!arg) return;
 
@@ -899,69 +1097,39 @@ drawbar_status(Monitor *m)
 {
   if (!m->showbar) return;
 
-  RenderData rd = {.x = m->wx + m->ww, .sy = m->status_y};
-  if (m->bar_info_idx < LENGTH(barinfonames)) {
-    const char *p = barinfonames[m->bar_info_idx];
-    uint w = TEXTW_(p) + 7;
-    if (m->status_x + w > rd.x) return;
+  m->dx = m->wx + m->ww;
+  m->dy = 3;
+  m->dw = m->dx - m->status_x;
+  m->dh = bh - m->dy;
 
-    rd.x -= w;
+  if (m->status_idx < LENGTH(statusrenderspecs)) {
+    const StatusRenderSpec *s = &statusrenderspecs[m->status_idx];
+
+    uint w = TEXTW_(s->icon) + 7;
+    if (m->status_x + w > m->dx) return;
+
+    m->dx -= w;
     drw_setscheme(drw, scheme[SchemeBarInfo]);
-    drw_rect(drw, rd.x, 0, w, rd.sy, 1, 1);
-    drw_text(drw, rd.x, rd.sy, w, bh - rd.sy, 4, p, 0);
+    drw_rect(drw, m->dx, 0, w, m->dh, 1, 1);
+    drw_text(drw, m->dx, m->dy, w, m->dh, 4, s->icon, 0);
+
+    uint orig_x = m->dx;
+    time_t now = time(NULL);
+    if (now < m->last_status_render + s->interval)
+      return;
+
+    s->render(m);
+
+    if (m->dy)
+      drw_rect(drw, m->dx, 0, orig_x - m->dx, m->dy, 1, 1);
+    m->last_status_render = time(NULL);
   }
 
-  switch (m->bar_info_idx) {
-  case BAR_INFO_WS_OVERVIEW:
-    if (m->clients) {
-      uint occ[WS_LEN] = {0}, urg[WS_LEN] = {0};
-      for (Client *c = m->clients; c; c = c->next) {
-	occ[c->ws_idx] = 1;
-	if (c->isurgent) urg[c->ws_idx] = 1;
-      }
-      for (int i = WS_LEN - 1; i >= 0; i--) {
-	if (!occ[i]) continue;
-
-	uint w = TEXTW(wsnames[i]);
-	if (m->status_x + w > rd.x) break;
-
-	rd.x -= w;
-	drw_text(drw, rd.x, 0, w, bh, lrpad / 2, wsnames[i], urg[i]);
-      }
-    }
-    break;
-  case BAR_INFO_WIN_TITLE:
-    if (m->sel) {
-      Client *c = m->sel;
-      char buf[300];
-      snprintf(buf, sizeof buf, "%s%s",
-	       c->isfloating ? "🪽  " : "", c->name);
-      uint w = MIN(MAX(TEXTW(buf), BAR_CLIENT_MIN_WIDTH), rd.x - m->status_x);
-
-      size_t si = SchemeSel1 + c->pane_idx;
-      drw_setscheme(drw, scheme[si]);
-      rd.x -= w;
-      drw_text(drw, rd.x, 0, w, bh, lrpad / 2, buf, 1);
-    }
-    break;
-  default:
-    {
-      const uint i = m->bar_info_idx - BAR_INFO_CUSTOM;
-      if (i < LENGTH(barinforenders)) {
-	uint orig_x = rd.x;
-	BarInfoRender r = barinforenders[i];
-	r(&rd);
-
-	drw_rect(drw, rd.x, 0, orig_x - rd.x, rd.sy, 1, 1);
-      }
-    }
-  }
-
-  if (m->status_x < rd.x) {
+  if (m->status_x < m->dx) {
     drw_setscheme(drw, scheme[SchemeBarInfo]);
-    drw_rect(drw, m->status_x, 0, rd.x - m->status_x, bh, 1, 1);
+    drw_rect(drw, m->status_x, 0, m->dx - m->status_x, bh, 1, 1);
   }
-  drw_map(drw, m->barwin, m->status_x, 0, m->wx + m->ww - m->status_x, bh);
+  drw_map(drw, m->barwin, m->status_x, 0, m->dw, bh);
 }
 
 void
@@ -997,7 +1165,7 @@ expose(XEvent *e)
   XExposeEvent *ev = &e->xexpose;
 
   if (ev->count == 0 && (m = wintomon(ev->window)))
-    if (m->bar_info_idx == BAR_INFO_WIN_TITLE)
+    if (m->status_idx == BAR_STATUS_WIN_TITLE)
       drawbar_status(m);
 }
 
@@ -1027,7 +1195,7 @@ focus(Client *c)
     XDeleteProperty(dpy, root, netatom[NetActiveWindow]);
   }
   selmon->sel = c;
-  if (c && c->mon->bar_info_idx < BAR_INFO_CUSTOM)
+  if (c && c->mon->status_idx < BAR_STATUS_CUSTOM)
     drawbar_status(c->mon);
 }
 
@@ -1039,42 +1207,6 @@ focusin(XEvent *e)
 
   if (selmon->sel && ev->window != selmon->sel->win)
     setfocus(selmon->sel);
-}
-
-void
-focuscycle(const Arg *arg)
-{
-  if (!selmon->sel || (selmon->sel->isfullscreen && lockfullscreen))
-    return;
-
-  const uint pi = selmon->sel->pane_idx;
-  if (!ISSHOWING(selmon, pi))
-    return;
-
-  Client *c = NULL, *i;
-
-  if (arg->i > 0) {
-    for (c = selmon->sel->next; c; c = c->next)
-      if (ISCURRENTWS(c) && c->pane_idx == pi)
-	break;
-    if (!c)
-      for (c = selmon->clients; c; c = c->next)
-	if (ISCURRENTWS(c) && c->pane_idx == pi)
-	  break;
-  } else {
-    for (i = selmon->clients; i != selmon->sel; i = i->next)
-      if (ISCURRENTWS(i) && i->pane_idx == pi)
-	c = i;
-    if (!c)
-      for (i = i->next; i; i = i->next)
-	if (ISCURRENTWS(i) && i->pane_idx == pi)
-	  c = i;
-  }
-
-  if (c && c != selmon->sel) {
-    focus(c);
-    restack(selmon);
-  }
 }
 
 void
@@ -1260,21 +1392,6 @@ inc_div_ratio(const Arg *arg)
   ws->div_ratio = d;
   drawbar(selmon);
   arrange(selmon);
-}
-
-void
-inc_info_idx(const Arg *arg)
-{
-  if (!arg) return;
-
-  int i = selmon->bar_info_idx + (arg->i > 0 ? 1 : -1);
-  if (i < 0)
-    i = BAR_INFO_CNT - 1;
-  else if (i >= BAR_INFO_CNT)
-    i = 0;
-
-  selmon->bar_info_idx = i;
-  drawbar_status(selmon);
 }
 
 void
@@ -1694,7 +1811,7 @@ propertynotify(XEvent *e)
     }
     if (ev->atom == XA_WM_NAME || ev->atom == netatom[NetWMName]) {
       updatetitle(c);
-      if (c == c->mon->sel && c->mon->bar_info_idx == BAR_INFO_WIN_TITLE)
+      if (c == c->mon->sel && c->mon->status_idx == BAR_STATUS_WIN_TITLE)
 	drawbar_status(c->mon);
     }
     if (ev->atom == netatom[NetWMWindowType])
@@ -1916,16 +2033,6 @@ sendevent(Client *c, Atom proto)
 }
 
 void
-setbarinfoidx(const Arg *arg)
-{
-  if (!arg || arg->ui >= BAR_INFO_CNT)
-    return;
-
-  selmon->bar_info_idx = arg->ui;
-  drawbar_status(selmon);
-}
-
-void
 setfocus(Client *c)
 {
   if (!c->neverfocus) {
@@ -2048,13 +2155,24 @@ seturgent(Client *c, int urg)
   XWMHints *wmh;
 
   c->isurgent = urg;
-  if (urg) c->mon->bar_info_idx = BAR_INFO_WS_OVERVIEW;
+  if (urg) c->mon->status_idx = BAR_STATUS_WORKSPACES;
 
   if (!(wmh = XGetWMHints(dpy, c->win)))
     return;
   wmh->flags = urg ? (wmh->flags | XUrgencyHint) : (wmh->flags & ~XUrgencyHint);
   XSetWMHints(dpy, c->win, wmh);
   XFree(wmh);
+}
+
+void
+set_bar_status(const Arg *arg)
+{
+  if (!arg || arg->ui >= BAR_STATUS_CNT)
+    return;
+
+  selmon->status_idx = arg->ui;
+  selmon->last_status_render = 0;
+  drawbar_status(selmon);
 }
 
 void
@@ -2189,7 +2307,7 @@ togglefloating(const Arg *arg)
 
   selmon->sel->isfloating = !selmon->sel->isfloating || selmon->sel->isfixed;
   arrange(selmon);
-  selmon->bar_info_idx = BAR_INFO_WIN_TITLE;
+  selmon->status_idx = BAR_STATUS_WIN_TITLE;
   drawbar_status(selmon);
 }
 
@@ -2461,7 +2579,7 @@ void
 updatestatus(void)
 {
   for (Monitor *m = mons; m; m = m->next)
-    if (m->bar_info_idx >= BAR_INFO_CUSTOM)
+    if (m->status_idx >= BAR_STATUS_CUSTOM)
       drawbar_status(m);
 }
 
@@ -2497,7 +2615,7 @@ updatewmhints(Client *c)
       XSetWMHints(dpy, c->win, wmh);
     } else {
       c->isurgent = (wmh->flags & XUrgencyHint) ? 1 : 0;
-      if (c->isurgent) c->mon->bar_info_idx = BAR_INFO_WS_OVERVIEW;
+      if (c->isurgent) c->mon->status_idx = BAR_STATUS_WORKSPACES;
     }
     if (wmh->flags & InputHint)
       c->neverfocus = !wmh->input;
