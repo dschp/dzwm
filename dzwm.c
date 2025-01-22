@@ -591,12 +591,12 @@ barstatus_read(Monitor *m, FILE *fp)
     p = strtok(NULL, "\n");
     if (p == NULL) continue;
 
-    w = TEXTW_(p) + pad * 2;
+    w = TEXTW_(p) + pad;
     if (m->status_x + w > m->dx) break;
 
     drw_setscheme(drw, scheme[si]);
     m->dx -= w;
-    drw_text(drw, m->dx, m->dy, w, m->dh, pad, p, 0);
+    drw_text(drw, m->dx, m->dy, w, m->dh, 0, p, 0);
   }
 }
 
