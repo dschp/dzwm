@@ -2706,12 +2706,11 @@ zoom(const Arg *arg)
 void*
 timer_loop(void* v)
 {
-  while (running) {
+  struct timespec ts = {.tv_sec = 1, .tv_nsec = 0};
+  do {
     XStoreName(dpy, root, "");
     XFlush(dpy);
-
-    sleep(1);
-  }
+  } while (nanosleep(&ts, NULL) == 0);
   return NULL;
 }
 
@@ -2737,7 +2736,7 @@ main(int argc, char *argv[])
   pthread_t timer;
   pthread_create(&timer, NULL, timer_loop, NULL);
   run();
-  pthread_join(timer, NULL);
+  pthread_kill(timer, SIGUSR1);
 
   cleanup();
   XCloseDisplay(dpy);
