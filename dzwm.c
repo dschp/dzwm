@@ -973,6 +973,7 @@ cycle_layout(const Arg *arg)
       p->layout_idx--;
   }
 
+  drawbar(selmon);
   arrange(selmon);
 }
 
