@@ -7,8 +7,8 @@ static const unsigned int borderpx  = 1;        /* border pixel of windows */
 static const unsigned int snap      = 16;       /* snap pixel */
 static const int showbar            = 1;        /* 0 means no bar */
 static const int topbar             = 0;        /* 0 means bottom bar */
-static const char *fonts[]          = { "sans-serif:size=7" };
-static const char dmenufont[]       = "sans-serif:size=11";
+static const char *fonts[]          = { "sans-serif:size=10" };
+static const char dmenufont[]       = "sans-serif:size=15";
 static const char col_sel1[]        = "#00bbff";
 static const char col_sel2[]        = "#f32f7c";
 static const char col_sel3[]        = "#afff00";
